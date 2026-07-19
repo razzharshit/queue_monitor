@@ -1,0 +1,49 @@
+{
+  "name": "@queue-monitor/shared",
+  "version": "1.0.0",
+  "description": "Shared event contracts and validation for Queue Monitor",
+  "license": "MIT",
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --sourcemap --clean",
+    "test": "tsc -p tsconfig.json --outDir .test-dist && node --test .test-dist/test/**/*.test.js && npm run build",
+    "prepublishOnly": "npm test && npm run build",
+    "pack:check": "npm pack --dry-run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "observability",
+    "telemetry",
+    "tracing",
+    "typescript"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/queue-monitor/queue-monitor.git",
+    "directory": "packages/shared"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.8.0"
+  }
+}

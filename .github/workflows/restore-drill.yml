@@ -1,0 +1,76 @@
+name: Production Restore Drill
+
+on:
+  schedule:
+    - cron: "30 3 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  restore-drill:
+    runs-on: ubuntu-latest
+    environment: production-operations
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: restore
+          POSTGRES_PASSWORD: restore-only-ephemeral
+          POSTGRES_DB: queue_monitor_restore
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U restore -d queue_monitor_restore"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: sudo apt-get update && sudo apt-get install -y age postgresql-client
+      - run: npm ci
+      - name: Download latest encrypted backup
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.BACKUP_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.BACKUP_AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ vars.BACKUP_AWS_REGION }}
+          BACKUP_BUCKET: ${{ vars.BACKUP_BUCKET }}
+        run: |
+          key="$(aws s3api list-objects-v2 --bucket "$BACKUP_BUCKET" --prefix queue-monitor/ --query 'reverse(sort_by(Contents[?ends_with(Key, `.dump.age`)], &LastModified))[0].Key' --output text)"
+          test "$key" != "None"
+          aws s3 cp "s3://$BACKUP_BUCKET/$key" "$RUNNER_TEMP/restore.dump.age"
+          aws s3 cp "s3://$BACKUP_BUCKET/$key.sha256" "$RUNNER_TEMP/restore.dump.age.sha256"
+      - name: Restore and validate
+        env:
+          BACKUP_AGE_IDENTITY_SECRET: ${{ secrets.BACKUP_AGE_IDENTITY }}
+          BACKUP_FILE: ${{ runner.temp }}/restore.dump.age
+          TARGET_DATABASE_URL: postgresql://restore:restore-only-ephemeral@127.0.0.1:5432/queue_monitor_restore
+          DATABASE_URL: postgresql://restore:restore-only-ephemeral@127.0.0.1:5432/queue_monitor_restore
+          RESTORE_CONFIRMATION: RESTORE
+        run: |
+          started="$(date +%s)"
+          printf '%s\n' "$BACKUP_AGE_IDENTITY_SECRET" > "$RUNNER_TEMP/age-identity.txt"
+          export BACKUP_AGE_IDENTITY="$RUNNER_TEMP/age-identity.txt"
+          bash scripts/restore-backup.sh
+          npm run db:migrate:validate
+          finished="$(date +%s)"
+          event_count="$(psql "$TARGET_DATABASE_URL" -Atc 'SELECT count(*) FROM events')"
+          echo "Restore drill duration: $((finished - started)) seconds; restored events: $event_count" >> "$GITHUB_STEP_SUMMARY"
+
+  notify-failure:
+    needs: [restore-drill]
+    if: ${{ always() && needs.restore-drill.result == 'failure' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Alert operations channel
+        env:
+          OPS_ALERT_WEBHOOK: ${{ secrets.OPS_ALERT_WEBHOOK }}
+        run: |
+          test -n "$OPS_ALERT_WEBHOOK"
+          curl --fail --silent --show-error -X POST "$OPS_ALERT_WEBHOOK" \
+            -H 'content-type: application/json' \
+            --data "{\"text\":\"Queue Monitor restore drill failed: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\"}"

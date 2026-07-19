@@ -1,0 +1,69 @@
+name: Production Operations
+
+on:
+  schedule:
+    - cron: "15 2 * * *"
+    - cron: "45 * * * *"
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Operation to run
+        required: true
+        default: backup
+        type: choice
+        options: [backup, retention]
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    if: github.event.schedule == '15 2 * * *' || github.event.inputs.operation == 'backup'
+    runs-on: ubuntu-latest
+    environment: production-operations
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y age postgresql-client
+      - run: bash scripts/backup.sh
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+          BACKUP_AGE_RECIPIENT: ${{ secrets.BACKUP_AGE_RECIPIENT }}
+          BACKUP_DIR: backups
+      - run: aws s3 cp backups/ "s3://${BACKUP_BUCKET}/queue-monitor/" --recursive --sse aws:kms --sse-kms-key-id "$BACKUP_KMS_KEY_ID"
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.BACKUP_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.BACKUP_AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ vars.BACKUP_AWS_REGION }}
+          BACKUP_BUCKET: ${{ vars.BACKUP_BUCKET }}
+          BACKUP_KMS_KEY_ID: ${{ vars.BACKUP_KMS_KEY_ID }}
+
+  retention:
+    if: github.event.schedule == '45 * * * *' || github.event.inputs.operation == 'retention'
+    runs-on: ubuntu-latest
+    environment: production-operations
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run db:retention
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+
+  notify-failure:
+    needs: [backup, retention]
+    if: ${{ always() && (needs.backup.result == 'failure' || needs.retention.result == 'failure') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Alert operations channel
+        env:
+          OPS_ALERT_WEBHOOK: ${{ secrets.OPS_ALERT_WEBHOOK }}
+          BACKUP_RESULT: ${{ needs.backup.result }}
+          RETENTION_RESULT: ${{ needs.retention.result }}
+        run: |
+          test -n "$OPS_ALERT_WEBHOOK"
+          curl --fail --silent --show-error -X POST "$OPS_ALERT_WEBHOOK" \
+            -H 'content-type: application/json' \
+            --data "{\"text\":\"Queue Monitor operations failure: backup=$BACKUP_RESULT retention=$RETENTION_RESULT run=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\"}"

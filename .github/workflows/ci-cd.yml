@@ -1,0 +1,239 @@
+name: CI/CD
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+concurrency:
+  group: ci-cd-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # 1. CI Phase: Run all checks, lints, builds, and test suites
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: queue_monitor
+          POSTGRES_PASSWORD: queue_monitor_ci
+          POSTGRES_DB: queue_monitor
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U queue_monitor -d queue_monitor"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://queue_monitor:queue_monitor_ci@localhost:5432/queue_monitor
+      QMON_TEST_DATABASE_URL: postgres://queue_monitor:queue_monitor_ci@localhost:5432/queue_monitor
+      QMON_TEST_REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+          
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm run typecheck
+      - run: npm run db:migrate
+      - run: npm run db:migrate:validate
+      - run: npm test
+      - run: npm run build
+      - run: npm run security:secrets
+      - run: npm run security:audit
+
+  # 2. CD Phase - Build: Build and push Docker images if tests pass on the main branches/tags
+  build-images:
+    needs: verify
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Downcase repository name (for Docker naming compliance)
+        run: echo "REPO_LOWER=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # --- API Service ---
+      - name: Extract metadata for API
+        id: meta-api
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ env.REPO_LOWER }}-api
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=sha,format=short
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' }}
+
+      - name: Build and push API Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          push: true
+          tags: ${{ steps.meta-api.outputs.tags }}
+          labels: ${{ steps.meta-api.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # --- Web Frontend Service ---
+      - name: Extract metadata for Web
+        id: meta-web
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ env.REPO_LOWER }}-web
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=sha,format=short
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' }}
+
+      - name: Build and push Web Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          push: true
+          tags: ${{ steps.meta-web.outputs.tags }}
+          labels: ${{ steps.meta-web.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # --- Demo Service ---
+      - name: Extract metadata for Demo Service
+        id: meta-demo
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ env.REPO_LOWER }}-demo
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=sha,format=short
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' }}
+
+      - name: Build and push Demo Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/demo-service/Dockerfile
+          push: true
+          tags: ${{ steps.meta-demo.outputs.tags }}
+          labels: ${{ steps.meta-demo.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # 3. CD Phase - Deploy: SSH into VPS, pull latest images, restart containers, with auto-rollback on failure
+  deploy:
+    needs: build-images
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to VPS via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            deploy_path="${{ secrets.VPS_DEPLOY_PATH }}"
+            if [ -z "$deploy_path" ]; then
+              deploy_path="/opt/queue-monitor"
+            fi
+            cd "$deploy_path"
+
+            # Extract list of images defined in compose file
+            images=$(docker compose config --images)
+
+            echo "Backing up currently running images..."
+            for img in $images; do
+              base_img=$(echo "$img" | cut -d: -f1)
+              docker tag "$img" "$base_img:rollback-backup" || echo "No previous image for $base_img to backup."
+            done
+
+            echo "Pulling new images..."
+            docker compose pull
+
+            echo "Starting new containers..."
+            docker compose up -d --remove-orphans
+
+            echo "Performing liveness health check..."
+            health_passed=false
+            host="${{ secrets.VPS_HOST }}"
+
+            # Try up to 12 times (60 seconds total)
+            for i in {1..12}; do
+              if curl --fail --silent --show-error "http://$host/web-health"; then
+                echo "Health check passed!"
+                health_passed=true
+                break
+              fi
+              echo "Waiting for app to start (attempt $i/12)..."
+              sleep 5
+            done
+
+            if [ "$health_passed" = false ]; then
+              echo "Health check FAILED! Initiating automated rollback to previous images..."
+              
+              for img in $images; do
+                base_img=$(echo "$img" | cut -d: -f1)
+                if docker image inspect "$base_img:rollback-backup" >/dev/null 2>&1; then
+                  echo "Restoring $base_img to rollback-backup..."
+                  docker tag "$base_img:rollback-backup" "$img"
+                else
+                  echo "No rollback backup found for $base_img!"
+                fi
+              done
+              
+              echo "Re-deploying previous containers..."
+              docker compose up -d --remove-orphans
+              
+              echo "Verifying recovery status..."
+              if curl --fail --silent --show-error "http://$host/web-health"; then
+                echo "Rollback successful. App recovered to previous version!"
+              else
+                echo "Rollback failed! App is still unhealthy."
+              fi
+              
+              # Exit with code 1 to fail the GitHub Actions workflow run
+              exit 1
+            else
+              # Clean up old/dangling images if deployment was successful
+              docker image prune -f
+              echo "Deployment completed successfully!"
+            fi
+

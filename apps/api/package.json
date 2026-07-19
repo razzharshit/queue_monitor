@@ -1,0 +1,33 @@
+{
+  "name": "@queue-monitor/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/src/server.js",
+    "test": "npm run build && node --test dist/test/**/*.test.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "db:migrate:validate": "tsx scripts/validate-migrations.ts",
+    "db:retention": "tsx scripts/apply-retention.ts",
+    "db:seed": "tsx scripts/seed-demo.ts",
+    "key:create": "tsx scripts/create-api-key.ts"
+  },
+  "dependencies": {
+    "@queue-monitor/shared": "1.0.0",
+    "fastify": "^5.4.0",
+    "nodemailer": "^9.0.3",
+    "pg": "^8.16.0",
+    "socket.io": "^4.8.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/nodemailer": "^7.0.12",
+    "@types/pg": "^8.15.4",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0"
+  }
+}

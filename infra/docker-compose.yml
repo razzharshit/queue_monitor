@@ -1,0 +1,130 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in infra/.env}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in infra/.env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in infra/.env}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../apps/api/migrations/001_initial.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    profiles: ["apps"]
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in infra/.env}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in infra/.env}
+      DEMO_LOGIN_EMAIL: ${DEMO_LOGIN_EMAIL:?set DEMO_LOGIN_EMAIL in infra/.env}
+      DEMO_LOGIN_PASSWORD: ${DEMO_LOGIN_PASSWORD:?set DEMO_LOGIN_PASSWORD in infra/.env}
+      DEMO_LOGIN_NAME: ${DEMO_LOGIN_NAME:?set DEMO_LOGIN_NAME in infra/.env}
+      DEMO_ORGANIZATION_NAME: ${DEMO_ORGANIZATION_NAME:?set DEMO_ORGANIZATION_NAME in infra/.env}
+      DEMO_ORGANIZATION_SLUG: ${DEMO_ORGANIZATION_SLUG:?set DEMO_ORGANIZATION_SLUG in infra/.env}
+      DEMO_PROJECT_NAME: ${DEMO_PROJECT_NAME:?set DEMO_PROJECT_NAME in infra/.env}
+      DEMO_PROJECT_SLUG: ${DEMO_PROJECT_SLUG:?set DEMO_PROJECT_SLUG in infra/.env}
+      DEMO_ENVIRONMENT_NAME: ${DEMO_ENVIRONMENT_NAME:?set DEMO_ENVIRONMENT_NAME in infra/.env}
+      DEMO_ENVIRONMENT_SLUG: ${DEMO_ENVIRONMENT_SLUG:?set DEMO_ENVIRONMENT_SLUG in infra/.env}
+      DEMO_ENVIRONMENT_TYPE: ${DEMO_ENVIRONMENT_TYPE:?set DEMO_ENVIRONMENT_TYPE in infra/.env}
+      DEMO_API_KEY: ${DEMO_API_KEY:?set DEMO_API_KEY in infra/.env}
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      HTTPS_ENFORCE: ${HTTPS_ENFORCE:-false}
+      TRUST_PROXY: ${TRUST_PROXY:-true}
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:4173}
+      APP_URL: ${APP_URL:-http://localhost:4173}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      MAX_REQUEST_BYTES: ${MAX_REQUEST_BYTES:-1048576}
+      MAX_EVENT_BYTES: ${MAX_EVENT_BYTES:-16384}
+      MAX_BATCH_SIZE: ${MAX_BATCH_SIZE:-100}
+      MAX_NESTING_DEPTH: ${MAX_NESTING_DEPTH:-12}
+      APP_VERSION: ${APP_VERSION:-0.1.0}
+      GIT_COMMIT_SHA: ${GIT_COMMIT_SHA:-unknown}
+      BUILD_TIMESTAMP: ${BUILD_TIMESTAMP:-2026-01-01T00:00:00.000Z}
+      PORT: 3000
+      APP_HOST: 0.0.0.0
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  demo-service:
+    profiles: ["apps"]
+    build:
+      context: ..
+      dockerfile: apps/demo-service/Dockerfile
+    environment:
+      QMON_API_KEY: ${DEMO_SEED_API_KEY:?set DEMO_SEED_API_KEY in infra/.env}
+      INGESTION_ENDPOINT: http://api:3000
+      REDIS_URL: redis://redis:6379
+      DEMO_PORT: 3001
+      DEMO_HOST: 0.0.0.0
+      DEMO_ENVIRONMENT: demo
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      APP_VERSION: ${APP_VERSION:-0.1.0}
+      GIT_COMMIT_SHA: ${GIT_COMMIT_SHA:-unknown}
+      BUILD_TIMESTAMP: ${BUILD_TIMESTAMP:-2026-01-01T00:00:00.000Z}
+    ports:
+      - "3001:3001"
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web:
+    profiles: ["apps"]
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+    ports:
+      - "4173:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/web-health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
+  redis_data:

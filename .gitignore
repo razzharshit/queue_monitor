@@ -1,0 +1,10 @@
+node_modules/
+.pnpm-store/
+dist/
+.test-dist/
+.env
+.env.*.local
+coverage/
+*.log
+dump.rdb
+infra/.env

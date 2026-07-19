@@ -1,0 +1,76 @@
+{
+  "name": "@queue-monitor/node",
+  "version": "1.0.0",
+  "description": "Reliable Node.js telemetry SDK for Queue Monitor",
+  "license": "MIT",
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --sourcemap --clean",
+    "test": "tsc -p tsconfig.json --outDir .test-dist && node --test .test-dist/test/**/*.test.js && npm run build",
+    "prepublishOnly": "npm test && npm run build",
+    "pack:check": "npm pack --dry-run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@queue-monitor/shared": "1.0.0",
+    "bullmq": "^5.58.0",
+    "fastify-plugin": "^5.0.0"
+  },
+  "peerDependencies": {
+    "express": ">=4.18.0 <6",
+    "fastify": ">=5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "express": {
+      "optional": true
+    },
+    "fastify": {
+      "optional": true
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "observability",
+    "telemetry",
+    "opentelemetry",
+    "express",
+    "fastify",
+    "bullmq"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/queue-monitor/queue-monitor.git",
+    "directory": "packages/sdk"
+  },
+  "homepage": "https://github.com/queue-monitor/queue-monitor#readme",
+  "bugs": {
+    "url": "https://github.com/queue-monitor/queue-monitor/issues"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^24.0.0",
+    "express": "^5.1.0",
+    "fastify": "^5.4.0",
+    "light-my-request": "^6.6.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.8.0"
+  }
+}

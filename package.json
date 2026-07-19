@@ -1,0 +1,64 @@
+{
+  "name": "queue-monitor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run build -w @queue-monitor/shared && npm run build -w @queue-monitor/node && concurrently -k -n api,demo,web \"npm run dev -w @queue-monitor/api\" \"npm run dev -w @queue-monitor/demo-service\" \"npm run dev -w @queue-monitor/web\"",
+    "dev:api": "npm run build -w @queue-monitor/shared && npm run dev -w @queue-monitor/api",
+    "dev:demo": "npm run build -w @queue-monitor/shared && npm run build -w @queue-monitor/node && npm run dev -w @queue-monitor/demo-service",
+    "dev:web": "npm run dev -w @queue-monitor/web",
+    "build": "npm run build -w @queue-monitor/shared && npm run build -w @queue-monitor/node && npm run build -w @queue-monitor/api && npm run build -w @queue-monitor/demo-service && npm run build -w @queue-monitor/web && npm run typecheck:scripts",
+    "start": "npm run start -w @queue-monitor/api",
+    "lint": "eslint . --max-warnings=0",
+    "format": "prettier --write package.json 'apps/*/package.json' 'packages/*/package.json' '.github/**/*.yml'",
+    "format:check": "prettier --check package.json 'apps/*/package.json' 'packages/*/package.json' '.github/**/*.yml'",
+    "test": "npm run test:demo-scripts && npm run test -w @queue-monitor/shared && npm run test -w @queue-monitor/node && npm run test -w @queue-monitor/api && npm run test -w @queue-monitor/demo-service && npm run test -w @queue-monitor/web",
+    "test:demo-scripts": "node --import tsx --test scripts/demo-data.test.ts",
+    "typecheck": "npm run build -w @queue-monitor/shared && npm run build -w @queue-monitor/node && npm run typecheck -w @queue-monitor/api && npm run typecheck -w @queue-monitor/demo-service && npm run typecheck -w @queue-monitor/web && npm run typecheck:scripts",
+    "typecheck:scripts": "tsc -p tsconfig.scripts.json",
+    "db:migrate": "npm run db:migrate -w @queue-monitor/api",
+    "db:migrate:validate": "npm run db:migrate:validate -w @queue-monitor/api",
+    "db:retention": "npm run db:retention -w @queue-monitor/api",
+    "backup:create": "bash scripts/backup.sh",
+    "backup:verify": "bash scripts/verify-backup.sh",
+    "backup:restore": "bash scripts/restore-backup.sh",
+    "db:seed": "npm run db:seed -w @queue-monitor/api",
+    "key:create": "npm run key:create -w @queue-monitor/api",
+    "demo:validate": "npm run validate -w @queue-monitor/demo-service --",
+    "demo:load": "npm run load:test -w @queue-monitor/demo-service",
+    "demo:seed-account": "tsx scripts/seed-demo-account.ts",
+    "demo:generate": "tsx scripts/generate-demo-data.ts",
+    "demo:reset": "tsx scripts/reset-demo-data.ts",
+    "demo:live-failure": "tsx scripts/live-demo-failure.ts",
+    "infra:up": "docker compose --env-file infra/.env -f infra/docker-compose.yml up -d",
+    "infra:stack:up": "docker compose --env-file infra/.env -f infra/docker-compose.yml --profile apps up --build -d",
+    "infra:down": "docker compose --env-file infra/.env -f infra/docker-compose.yml down",
+    "security:audit": "npm audit --audit-level=critical",
+    "security:secrets": "node scripts/check-secrets.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "overrides": {
+    "tsup": {
+      "esbuild": "^0.28.1"
+    }
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.15.4",
+    "concurrently": "^9.2.0",
+    "eslint": "^10.7.0",
+    "prettier": "^3.9.5",
+    "pg": "^8.16.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0",
+    "typescript-eslint": "^8.64.0"
+  }
+}
