@@ -47,12 +47,12 @@ jobs:
       QMON_TEST_REDIS_URL: redis://localhost:6379
     steps:
       - uses: actions/checkout@v4
-      
+
       - uses: actions/setup-node@v4
         with:
-          node-version-file: '.nvmrc'
+          node-version-file: ".nvmrc"
           cache: npm
-          
+
       - run: npm ci
       - run: npm run lint
       - run: npm run format:check
@@ -236,4 +236,3 @@ jobs:
               docker image prune -f
               echo "Deployment completed successfully!"
             fi
-
